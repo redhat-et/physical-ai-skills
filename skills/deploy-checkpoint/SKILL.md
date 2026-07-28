@@ -24,12 +24,13 @@ callable model endpoint, in order:
    stage is ready, kicks off the next one. Keep calling it until it reports
    the model deployed. Copying a full checkpoint takes a couple of minutes,
    so "still copying" on an early poll is expected, not a failure.
-4. The deployed model is scale-to-zero, same as catalog models — call
-   scale_model(isvc_name, 1) to actually warm it up before testing or
-   calling it, using the isvc_name reported by get_checkpoint_deployment_status.
-   First startup can take several minutes (image pull plus the server's own
-   warmup inference) — use get_model_status(isvc_name) and, if it's taking a
-   while, get_pod_logs to check real progress rather than assuming failure.
+4. The deployed model is scale-to-zero, same as catalog models — use the
+   models skill's SCALING UP OR DOWN steps to actually warm it up before
+   testing or calling it, using the isvc_name reported by
+   get_checkpoint_deployment_status. First startup can take several
+   minutes (image pull plus the server's own warmup inference) — use the
+   models skill's status/log steps on isvc_name to check real progress
+   rather than assuming failure.
 5. "Deployed" only means the InferenceService/pod came up healthy -- it does
    not mean a real inference request has been verified. If asked to confirm
    the checkpoint actually serves correctly, that needs an actual request
@@ -37,6 +38,6 @@ callable model endpoint, in order:
    just a healthy pod.
 6. This is NOT yet wired into the robotics playground's model list — that's
    a manual follow-up, not something this skill does automatically.
-7. When done comparing, use the manage-models skill's
-   takedown_checkpoint_model to tear it down and free the GPU/storage it
-   was using.
+7. When done comparing, use the models skill's TEARING DOWN A CHECKPOINT
+   DEPLOYMENT section (takedown_checkpoint_model) to tear it down and free
+   the GPU/storage it was using.
