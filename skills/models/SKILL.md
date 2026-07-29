@@ -3,9 +3,9 @@ name: models
 description: Use before listing deployed models, checking a specific model's status/output_kind, calling it for inference, scaling it up/down, tearing down a checkpoint deployment, or permanently removing a catalog model.
 ---
 MODELS — operations on models that already exist, via the general cluster
-tools (`resources_list`/`resources_get`/`resources_scale`/
-`resources_create_or_update`/`pods_list_in_namespace`/`pods_log`, served by
-the openshift-mcp-server sidecar). For adding a brand-new catalog model,
+tools (`resources_list`/`resources_get`/`pods_list_in_namespace`/`pods_log`,
+served by the openshift-mcp-server sidecar) plus the dedicated `scale_model`
+tool for scaling. For adding a brand-new catalog model,
 use deploy-model or new-model-runtime instead; for standing up a
 fine-tuned checkpoint for the first time, use deploy-checkpoint. Models
 run as KServe `InferenceService` objects in the `physical-ai-models`
@@ -45,17 +45,24 @@ previous turn's message, including your own — only this turn's tool calls
 and results tell you what's true now. Same procedure for a catalog model
 or a checkpoint deployment (see the deploy-checkpoint skill).
 
-To bring a model up (target 1 replica):
-1. `resources_get` the InferenceService (as above), set `spec.predictor.minReplicas` to `1` in the fetched object, then `resources_create_or_update(resource=<the full modified object>)` — this is Server-Side Apply, so re-apply the COMPLETE resource, not a partial patch, or you'll wipe out any field you don't include.
-2. If an HTTPScaledObject exists for it — `resources_get(apiVersion="http.keda.sh/v1alpha1", kind="HTTPScaledObject", namespace="physical-ai-models", name="<model_name>-http-scaler")`, a 404 is expected for always-on models like mocklm/qwen25-cpu, skip the rest of this step if so — set `spec.replicas.min` to `1` and re-apply via `resources_create_or_update`.
-3. Clear any leftover KEDA pause from a previous shutdown: `resources_get(apiVersion="keda.sh/v1alpha1", kind="ScaledObject", namespace="physical-ai-models", name="<model_name>-http-scaler")`, remove the `autoscaling.keda.sh/paused-replicas` annotation if present, re-apply. Without this, a paused ScaledObject ignores incoming HTTP traffic and stays pinned at 0 forever, regardless of the InferenceService's own `minReplicas`.
+Call `scale_model(model_name, min_replicas)` — `1` to bring it up, `0` to
+shut it down. This single call handles the full KEDA-aware sequence
+itself: the InferenceService's `minReplicas`, the HTTPScaledObject's own
+`spec.replicas.min` (skipped for always-on models like mocklm/qwen25-cpu,
+which don't have one), setting or clearing the ScaledObject's
+`autoscaling.keda.sh/paused-replicas` annotation, and — on shutdown —
+forcing the predictor Deployment to 0 replicas and deleting any
+still-running pods immediately rather than waiting for the HPA to notice.
+Don't reimplement any of this by hand via
+`resources_get`/`resources_create_or_update`/`resources_scale` — a
+partially-applied sequence leaves the model stuck (most commonly: a
+paused ScaledObject silently ignoring all future HTTP traffic, pinning it
+at 0 forever regardless of the InferenceService's own `minReplicas`).
 
-To shut a model down (target 0 replicas):
-1. Same InferenceService `resources_get` → set `spec.predictor.minReplicas` to `0` → `resources_create_or_update`.
-2. Same HTTPScaledObject, `spec.replicas.min` to `0` (skip on 404).
-3. Pin the ScaledObject to exactly 0 via the KEDA pause annotation: `resources_get` the ScaledObject, set `metadata.annotations["autoscaling.keda.sh/paused-replicas"]` to `"0"`, re-apply. The HTTPScaledObject's own idle cooldown (often ~1hr) otherwise keeps its generated HPA pinned at `minReplicas=1` while "active", fighting the direct scale-down above — the pause annotation is the only way to force an exact replica count regardless of that cooldown.
-4. Force the predictor Deployment to 0 right now rather than waiting for the HPA to notice: `resources_scale(apiVersion="apps/v1", kind="Deployment", namespace="physical-ai-models", name="<model_name>-predictor", scale=0)`.
-5. Delete any still-running pods so the shutdown is immediate: `pods_list_in_namespace(namespace="physical-ai-models", labelSelector="serving.kserve.io/inferenceservice=<model_name>")`, then `resources_delete(apiVersion="v1", kind="Pod", namespace="physical-ai-models", name=<each pod>)` for each one found.
+After calling `scale_model`, use the CHECKING A SPECIFIC MODEL'S STATUS
+steps above to confirm the change actually took — especially for
+scale-up, since first startup can take several minutes and isn't
+instantaneous just because the call returned.
 
 GETTING LOGS: `pods_list_in_namespace(namespace="physical-ai-models", labelSelector="serving.kserve.io/inferenceservice=<model_name>")`, take a pod from the result, then `pods_log(namespace="physical-ai-models", name=<pod>, container="kserve-container", tail=<N>)`. No pods found means the model is likely scaled to zero, not necessarily broken.
 
