@@ -7,7 +7,18 @@ Hugging Face repo id they supply). There is no dataset search/discovery
 tool; never suggest candidate datasets or a repo id you weren't given
 directly by the user. In order:
 
-1. list_staged_datasets first — don't re-pull an already-staged dataset.
+1. Check what's already staged first — don't re-pull an already-staged
+   dataset. No dedicated tool for this: call
+   `resources_list(apiVersion="v1", kind="PersistentVolumeClaim", namespace="physical-ai", labelSelector="physical-ai.io/dataset-cache=true")`
+   (the general cluster tool served by the openshift-mcp-server sidecar,
+   same one the models skill uses). For each PVC returned:
+   `metadata.name` is the PVC name pull_dataset/convert_dataset_to_v3 take
+   as dataset_pvc_name; `metadata.labels["physical-ai.io/dataset-repo"]`
+   is the source HF repo id, but with every `/` swapped for `--` (a K8s
+   label value can't contain `/`) — swap it back before showing it to the
+   user or comparing against a dataset_repo_id; `spec.resources.requests.storage`
+   is the requested size; `status.phase` is the bind status (`Bound` is
+   healthy). No results means nothing is staged yet.
 2. For a named catalog model (e.g. 'pi05', 'dreamzero'), call
    get_model_readme(model_name, section='Dataset Compatibility') —
    model_name is the catalog directory name, not a Hugging Face repo id.
