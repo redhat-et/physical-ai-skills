@@ -9,7 +9,7 @@ Fetched into the agent's container image at build time.
 ```
 skills/
   <skill-name>/
-    SKILL.md    # workflow instructions the agent loads via get_skill()
+    SKILL.md    # workflow instructions
     tools.py    # the skill's LangChain tools, auto-discovered by the agent
 ```
 
