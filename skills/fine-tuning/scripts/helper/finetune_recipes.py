@@ -20,9 +20,42 @@ needed either -- lerobot-train is a normal CLI.
 
 import json
 
-from platform_agent.skills.datasets.tools import _fetch_lerobot_info
-
 LEROBOT_IMAGE = "huggingface/lerobot-gpu:latest"
+
+
+def split_dataset_repo_id(dataset_repo_id: str) -> tuple[str, str | None]:
+    """A real Hugging Face repo id is always exactly two slash-separated
+    segments (org/name) -- anything past that in dataset_repo_id is a
+    subfolder within the repo, not part of the id, and needs splitting back
+    off before any call that actually hits the Hub API (e.g.
+    hf_hub_download). Exists because some repos (e.g. nvidia's
+    PhysicalAI-Robotics-Manipulation-SingleArm) bundle several independent
+    LeRobot datasets as subfolders of one repo instead of one dataset per
+    repo -- confirmed live via the Hub API's file listing: each subfolder
+    has its own meta/info.json, not the repo root.
+    """
+    parts = dataset_repo_id.split("/", 2)
+    if len(parts) <= 2:
+        return dataset_repo_id, None
+    return "/".join(parts[:2]), parts[2]
+
+
+def _fetch_lerobot_info(dataset_repo_id: str) -> dict | str:
+    """Returns the parsed meta/info.json for a LeRobot-format dataset repo
+    (or subfolder), or an error string.
+    """
+    from huggingface_hub import hf_hub_download
+
+    real_repo_id, subset = split_dataset_repo_id(dataset_repo_id)
+    filename = f"{subset}/meta/info.json" if subset else "meta/info.json"
+
+    try:
+        info_path = hf_hub_download(repo_id=real_repo_id, repo_type="dataset", filename=filename)
+    except Exception as e:
+        return f"Could not fetch {filename} for '{dataset_repo_id}': {e}. Is this actually a LeRobot-format dataset?"
+
+    with open(info_path) as f:
+        return json.load(f)
 
 DATASET_MOUNT_ROOT = "/mnt/lerobot_home"
 CHECKPOINT_MOUNT_PATH = "/mnt/checkpoint"
