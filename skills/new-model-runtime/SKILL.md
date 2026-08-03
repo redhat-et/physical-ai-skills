@@ -69,9 +69,10 @@ side, produce:
   the runtime above by name, mounts any extra volumes it needs (see the
   compiled-kernel-cache note below). Set
   `annotations: {physical-ai.io/output-kind: ...}` to a real output_kind
-  (chat/image/video) ONLY if the runtime actually speaks one of call_model's
-  supported API shapes — otherwise set it to `unsupported`, exactly like
-  pi0.5's own InferenceService does, rather than inventing a mapping.
+  (chat/image/video) ONLY if the runtime actually speaks one of those
+  standard API shapes (see the models skill) — otherwise set it to
+  `unsupported`, exactly like pi0.5's own InferenceService does, rather
+  than inventing a mapping.
 - `pvc.yaml` + `model-download-job.yaml` — model weights cache, same pattern
   as any other model, unless the runtime handles its own download.
 - **Compiled-kernel-cache PVC, when relevant**: if the runtime does

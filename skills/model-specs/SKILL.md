@@ -7,6 +7,10 @@ scaling/inference actions. It's the reference for what a catalog model
 *is*, as opposed to the models skill (what a deployed instance is
 currently doing).
 
+## Scripts
+
+Run via the shell tool: `python3 "$SKILLS_ROOT/model-specs/scripts/get_model_reference.py" --model-name <name>`.
+
 Each catalog model with a documented dataset/training profile has a file
 under `references/<model_name>.md` (e.g. `references/pi05.md`,
 `references/dreamzero.md`), keyed by the same catalog directory name used
