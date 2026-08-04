@@ -13,9 +13,16 @@ from platform_agent.config import settings
 # path -- so this still works if the fine-tuning skill folder is renamed,
 # moved, or installed standalone (e.g. via `npx skills add --skill
 # fine-tuning`) outside of platform_agent's package tree entirely.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "helper"))
-from finetune_pipeline import get_pipeline_run_state, log_finetune_run_params, submit_pipeline_run  # noqa: E402
-from finetune_recipes import CHECKPOINT_MOUNT_PATH, dataset_mount_path, get_recipe  # noqa: E402
+def _resolve_lib_path() -> None:
+    here = Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+
+
+_resolve_lib_path()
+
+from lib.finetune_pipeline import get_pipeline_run_state, log_finetune_run_params, submit_pipeline_run  # noqa: E402
+from lib.finetune_recipes import CHECKPOINT_MOUNT_PATH, dataset_mount_path, get_recipe  # noqa: E402
 
 FINETUNE_EXP_LABEL = "physical-ai.io/finetune-exp"
 FINETUNE_RUN_ID_ANNOTATION = "physical-ai.io/kfp-run-id"
