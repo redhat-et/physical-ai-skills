@@ -1,6 +1,6 @@
 ---
 name: deploy-model
-description: Use before sizing hardware or drafting manifests for a model that fits an existing runtime pattern (stock vLLM chat, or vLLM-Omni multimodal). For a model needing a runtime this platform hasn't run before, use new-model-runtime instead.
+description: Use when sizing hardware or drafting manifests for a model that fits an existing runtime pattern (stock vLLM chat, or vLLM-Omni multimodal). For a model needing a runtime this platform hasn't run before, use new-model-runtime instead.
 ---
 DEPLOY MODEL — for hardware sizing or adding a new model to the catalog that
 fits an existing runtime pattern.

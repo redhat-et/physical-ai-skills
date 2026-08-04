@@ -1,6 +1,6 @@
 ---
 name: fine-tuning
-description: Use before discussing, submitting, or checking on a fine-tuning run — GPU training jobs on pi05/robot-policy checkpoints, submit_finetune_run, get_finetune_run_status, or questions like "how's my fine-tune doing" or "kick off training on X dataset."
+description: Use when discussing, submitting, or checking on a fine-tuning run — GPU training jobs on pi05/robot-policy checkpoints, submit_finetune_run, get_finetune_run_status, or questions like "how's my fine-tune doing" or "kick off training on X dataset."
 ---
 FINE-TUNING
 

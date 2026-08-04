@@ -1,6 +1,6 @@
 ---
 name: models
-description: Use before listing deployed models, checking a specific model's status/output_kind, scaling it up/down, tearing down a checkpoint deployment, or permanently removing a catalog model.
+description: Use when listing deployed models, checking a specific model's status/output_kind, scaling it up/down, tearing down a checkpoint deployment, or permanently removing a catalog model.
 ---
 MODELS — operations on models that already exist, via the general cluster
 tools (`resources_list`/`resources_get`/`pods_list_in_namespace`/`pods_log`,

@@ -1,6 +1,6 @@
 ---
 name: datasets
-description: Use before inspecting, validating, or pulling a user-supplied dataset for fine-tuning or general use, or when asked what data a robot-policy model (pi0.5, DreamZero) was trained or fine-tuned on.
+description: Use when inspecting, validating, or pulling a user-supplied dataset for fine-tuning or general use, or when asked what data a robot-policy model (pi0.5, DreamZero) was trained or fine-tuned on.
 ---
 DATASETS — this platform requires users to bring their own dataset (a
 Hugging Face repo id they supply). There is no dataset search/discovery
