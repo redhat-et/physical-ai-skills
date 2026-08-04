@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Fetch a catalog model's static spec reference -- dataset/training
+#   compatibility, architecture notes -- bundled with this skill. Not live
+#   cluster state (see the models skill for a deployed instance's status).
+#   model-name is the catalog directory name (e.g. 'pi05', 'dreamzero'), not
+#   a Hugging Face repo id.
+# parameters:
+#   - name: model-name
+#     type: string
+#     required: true
+#     description: Catalog model directory name, e.g. 'pi05' or 'dreamzero'.
+# ---
 """Fetch a catalog model's static spec reference. See ../SKILL.md."""
 import argparse
 from pathlib import Path

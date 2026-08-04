@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Convert an already-staged LeRobot dataset from v2.1 to v3.0 format, in
+#   place on its existing PVC. Only call this after a fine-tuning run's train
+#   stage has actually failed with a dataset-format error -- check
+#   get_finetune_run_status's stage logs first. Runs as a Kubernetes Job, no
+#   GPU needed. Check progress with get_dataset_conversion_status afterward.
+# parameters:
+#   - name: dataset-pvc-name
+#     type: string
+#     required: true
+#     description: PVC name of an already-pull_dataset-staged dataset.
+# ---
 """Convert an already-staged LeRobot dataset from v2.1 to v3.0 format, in
 place on its existing PVC. See ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 DATASET_REPO_LABEL = "physical-ai.io/dataset-repo"
 
@@ -57,11 +71,11 @@ def convert_dataset_to_v3(dataset_pvc_name: str) -> str:
 
     try:
         pvc = core_api.read_namespaced_persistent_volume_claim(
-            name=dataset_pvc_name, namespace=settings.datasets_namespace
+            name=dataset_pvc_name, namespace=DATASETS_NAMESPACE
         )
     except client.exceptions.ApiException as e:
         if e.status == 404:
-            return f"Dataset PVC '{dataset_pvc_name}' not found in '{settings.datasets_namespace}'. Pull it first with pull_dataset."
+            return f"Dataset PVC '{dataset_pvc_name}' not found in '{DATASETS_NAMESPACE}'. Pull it first with pull_dataset."
         return f"Could not read PVC '{dataset_pvc_name}': {e.reason}"
 
     dataset_repo_id = dataset_repo_id_from_pvc(pvc)
@@ -115,7 +129,7 @@ python -m lerobot.scripts.convert_dataset_v21_to_v30 \\
 
     try:
         batch_api.create_namespaced_job(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             body={
                 "apiVersion": "batch/v1",
                 "kind": "Job",

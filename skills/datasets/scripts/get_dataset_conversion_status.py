@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Check the status of a v2.1-to-v3.0 dataset conversion started by
+#   convert_dataset_to_v3: whether the Job succeeded/failed/is still running.
+# parameters:
+#   - name: dataset-pvc-name
+#     type: string
+#     required: true
+#     description: The dataset-pvc-name passed to convert_dataset_to_v3.
+# ---
 """Check the status of a v2.1-to-v3.0 dataset conversion started by
 convert_dataset_to_v3. See ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 
 def _get_clients():
@@ -30,7 +41,7 @@ def get_dataset_conversion_status(dataset_pvc_name: str) -> str:
     job_name = _conversion_job_name(dataset_pvc_name)
 
     try:
-        job = batch_api.read_namespaced_job(name=job_name, namespace=settings.datasets_namespace)
+        job = batch_api.read_namespaced_job(name=job_name, namespace=DATASETS_NAMESPACE)
     except client.exceptions.ApiException as e:
         if e.status == 404:
             return f"No conversion Job '{job_name}' found — has convert_dataset_to_v3 been called for '{dataset_pvc_name}'?"
@@ -50,14 +61,14 @@ def get_dataset_conversion_status(dataset_pvc_name: str) -> str:
 
     if state == "failed":
         pods = core_api.list_namespaced_pod(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             label_selector=f"job-name={job_name}",
         )
         if pods.items:
             try:
                 logs = core_api.read_namespaced_pod_log(
                     name=pods.items[0].metadata.name,
-                    namespace=settings.datasets_namespace,
+                    namespace=DATASETS_NAMESPACE,
                     tail_lines=30,
                 )
                 result += f"\nLast 30 log lines:\n{logs}"

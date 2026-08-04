@@ -1,11 +1,34 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Download a Hugging Face dataset onto the cluster so a fine-tuning job can
+#   read it. Consumes real shared-cluster storage -- only call this after
+#   calling get_dataset_info and showing the user its size and license, and
+#   after the user has explicitly said to proceed. Never call this
+#   speculatively. Creates a PVC and a Kubernetes Job; check progress with
+#   get_dataset_job_status afterward.
+# parameters:
+#   - name: dataset-repo-id
+#     type: string
+#     required: true
+#     description: HF dataset repo id, e.g. 'GEAR-Dreams/DreamZero-DROID'.
+#   - name: dataset-name
+#     type: string
+#     required: true
+#     description: Short name for this staged dataset (K8s resource name prefix).
+#   - name: pvc-size-gb
+#     type: integer
+#     required: false
+#     default: 50
+# ---
 """Download a Hugging Face dataset onto the cluster so a fine-tuning job can
 read it. See ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 DATASET_CACHE_LABEL = "physical-ai.io/dataset-cache"
 DATASET_REPO_LABEL = "physical-ai.io/dataset-repo"
@@ -62,7 +85,7 @@ def pull_dataset(dataset_repo_id: str, dataset_name: str, pvc_size_gb: int = 50)
 
     try:
         core_api.create_namespaced_persistent_volume_claim(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             body={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -192,7 +215,7 @@ fi
 
     try:
         batch_api.create_namespaced_job(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             body={
                 "apiVersion": "batch/v1",
                 "kind": "Job",
@@ -256,7 +279,7 @@ fi
 
     return (
         f"Started downloading '{dataset_repo_id}' into PVC '{pvc_name}' via "
-        f"Job '{job_name}' in namespace '{settings.datasets_namespace}'. "
+        f"Job '{job_name}' in namespace '{DATASETS_NAMESPACE}'. "
         f"Call get_dataset_job_status('{dataset_name}') to check progress."
     )
 

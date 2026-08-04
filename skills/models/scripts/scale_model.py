@@ -1,11 +1,26 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Scale a model by setting its minReplicas. Use 1 to bring a model up and
+#   keep it running. Use 0 to shut it down immediately.
+# parameters:
+#   - name: model-name
+#     type: string
+#     required: true
+#     description: The name of the InferenceService to scale.
+#   - name: min-replicas
+#     type: integer
+#     required: true
+#     description: 0 = shut down, 1+ = keep running.
+# ---
 """Scale a model by setting its minReplicas. See ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 from kubernetes.client import AppsV1Api
 
-from platform_agent.config import settings
+MODELS_NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
 
 
 def _get_k8s_client():
@@ -28,7 +43,7 @@ def scale_model(model_name: str, min_replicas: int) -> str:
         custom_api.patch_namespaced_custom_object(
             group="serving.kserve.io",
             version="v1beta1",
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             plural="inferenceservices",
             name=model_name,
             body={"spec": {"predictor": {"minReplicas": min_replicas}}},
@@ -43,7 +58,7 @@ def scale_model(model_name: str, min_replicas: int) -> str:
         custom_api.patch_namespaced_custom_object(
             group="http.keda.sh",
             version="v1alpha1",
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             plural="httpscaledobjects",
             name=scaler_name,
             body={"spec": {"replicas": {"min": min_replicas}}},
@@ -62,7 +77,7 @@ def scale_model(model_name: str, min_replicas: int) -> str:
             custom_api.patch_namespaced_custom_object(
                 group="keda.sh",
                 version="v1alpha1",
-                namespace=settings.models_namespace,
+                namespace=MODELS_NAMESPACE,
                 plural="scaledobjects",
                 name=scaler_name,
                 body={"metadata": {"annotations": {"autoscaling.keda.sh/paused-replicas": "0"}}},
@@ -71,7 +86,7 @@ def scale_model(model_name: str, min_replicas: int) -> str:
             custom_api.patch_namespaced_custom_object(
                 group="keda.sh",
                 version="v1alpha1",
-                namespace=settings.models_namespace,
+                namespace=MODELS_NAMESPACE,
                 plural="scaledobjects",
                 name=scaler_name,
                 body={"metadata": {"annotations": {"autoscaling.keda.sh/paused-replicas": None}}},
@@ -85,20 +100,20 @@ def scale_model(model_name: str, min_replicas: int) -> str:
         try:
             apps_api.patch_namespaced_deployment_scale(
                 name=deploy_name,
-                namespace=settings.models_namespace,
+                namespace=MODELS_NAMESPACE,
                 body={"spec": {"replicas": 0}},
             )
         except client.exceptions.ApiException:
             pass
         pods = core_api.list_namespaced_pod(
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             label_selector=f"serving.kserve.io/inferenceservice={model_name}",
         )
         deleted = 0
         for pod in pods.items:
             core_api.delete_namespaced_pod(
                 name=pod.metadata.name,
-                namespace=settings.models_namespace,
+                namespace=MODELS_NAMESPACE,
             )
             deleted += 1
         return (

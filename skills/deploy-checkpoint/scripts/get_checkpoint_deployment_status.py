@@ -1,12 +1,32 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Check progress of a checkpoint deployment started by
+#   deploy_checkpoint_model, and advance it to the next stage if the current
+#   one has finished. Call this repeatedly until it reports the model
+#   deployed -- unlike get_finetune_run_status, nothing else drives this
+#   forward automatically.
+# parameters:
+#   - name: exp-name
+#     type: string
+#     required: true
+#     description: The exp-name passed to deploy_checkpoint_model.
+#   - name: model-name
+#     type: string
+#     required: false
+#     default: pi05
+#     description: Only 'pi05' is supported so far.
+# ---
 """Check progress of a checkpoint deployment started by deploy_checkpoint_model,
 and advance it to the next stage if the current one has finished. See
 ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
+MODELS_NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
 
 FINETUNE_EXP_LABEL = "physical-ai.io/finetune-exp"
 CHECKPOINT_DEPLOYMENT_LABEL = "physical-ai.io/checkpoint-deployment"
@@ -220,7 +240,7 @@ PYEOF
 """
     try:
         batch_api.create_namespaced_job(
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             body={
                 "apiVersion": "batch/v1",
                 "kind": "Job",
@@ -263,7 +283,7 @@ def _create_checkpoint_inference_service(custom_api, core_api, exp_name: str, is
 
     try:
         core_api.create_namespaced_persistent_volume_claim(
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             body={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -284,7 +304,7 @@ def _create_checkpoint_inference_service(custom_api, core_api, exp_name: str, is
         "kind": "InferenceService",
         "metadata": {
             "name": isvc_name,
-            "namespace": settings.models_namespace,
+            "namespace": MODELS_NAMESPACE,
             "labels": {
                 "opendatahub.io/dashboard": "true",
                 "opendatahub.io/genai-asset": "true",
@@ -321,7 +341,7 @@ def _create_checkpoint_inference_service(custom_api, core_api, exp_name: str, is
         custom_api.create_namespaced_custom_object(
             group="serving.kserve.io",
             version="v1beta1",
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             plural="inferenceservices",
             body=isvc_body,
         )
@@ -333,9 +353,9 @@ def _create_checkpoint_inference_service(custom_api, core_api, exp_name: str, is
     scaler_body = {
         "apiVersion": "http.keda.sh/v1alpha1",
         "kind": "HTTPScaledObject",
-        "metadata": {"name": scaler_name, "namespace": settings.models_namespace, "labels": labels},
+        "metadata": {"name": scaler_name, "namespace": MODELS_NAMESPACE, "labels": labels},
         "spec": {
-            "hosts": [f"{isvc_name}-predictor.{settings.models_namespace}.svc.cluster.local"],
+            "hosts": [f"{isvc_name}-predictor.{MODELS_NAMESPACE}.svc.cluster.local"],
             "targetPendingRequests": 1,
             "scaleTargetRef": {
                 "name": f"{isvc_name}-predictor",
@@ -352,7 +372,7 @@ def _create_checkpoint_inference_service(custom_api, core_api, exp_name: str, is
         custom_api.create_namespaced_custom_object(
             group="http.keda.sh",
             version="v1alpha1",
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             plural="httpscaledobjects",
             body=scaler_body,
         )
@@ -362,7 +382,7 @@ def _create_checkpoint_inference_service(custom_api, core_api, exp_name: str, is
 
     return (
         f"Deployed '{isvc_name}' -- scale-to-zero, currently at 0 replicas. "
-        f"Predictor: {isvc_name}-predictor.{settings.models_namespace}.svc.cluster.local. "
+        f"Predictor: {isvc_name}-predictor.{MODELS_NAMESPACE}.svc.cluster.local. "
         f"Call scale_model('{isvc_name}', 1) to warm it up for testing, and "
         f"takedown_checkpoint_model('{exp_name}') when you're done comparing."
     )
@@ -390,7 +410,7 @@ def get_checkpoint_deployment_status(exp_name: str, model_name: str = "pi05") ->
         custom_api.get_namespaced_custom_object(
             group="serving.kserve.io",
             version="v1beta1",
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             plural="inferenceservices",
             name=isvc_name,
         )
@@ -402,19 +422,19 @@ def get_checkpoint_deployment_status(exp_name: str, model_name: str = "pi05") ->
 
     if already_deployed:
         pods = core_api.list_namespaced_pod(
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             label_selector=f"serving.kserve.io/inferenceservice={isvc_name}",
         )
         status = _live_pod_status(pods.items)
         return (
             f"'{isvc_name}' is deployed (scale-to-zero) at "
-            f"{isvc_name}-predictor.{settings.models_namespace}.svc.cluster.local -- {status}. "
+            f"{isvc_name}-predictor.{MODELS_NAMESPACE}.svc.cluster.local -- {status}. "
             f"Call scale_model('{isvc_name}', 1) to warm it up for testing."
         )
 
     import_job_name = _import_job_name(isvc_name)
     try:
-        import_job = batch_api.read_namespaced_job(name=import_job_name, namespace=settings.models_namespace)
+        import_job = batch_api.read_namespaced_job(name=import_job_name, namespace=MODELS_NAMESPACE)
     except client.exceptions.ApiException as e:
         if e.status != 404:
             return f"Could not read import Job '{import_job_name}': {e.reason}"
@@ -425,7 +445,7 @@ def get_checkpoint_deployment_status(exp_name: str, model_name: str = "pi05") ->
             try:
                 batch_api.delete_namespaced_job(
                     name=_export_job_name(exp_name),
-                    namespace=settings.datasets_namespace,
+                    namespace=DATASETS_NAMESPACE,
                     propagation_policy="Background",
                 )
             except client.exceptions.ApiException:
@@ -441,7 +461,7 @@ def get_checkpoint_deployment_status(exp_name: str, model_name: str = "pi05") ->
 
     export_job_name = _export_job_name(exp_name)
     export_pods = core_api.list_namespaced_pod(
-        namespace=settings.datasets_namespace, label_selector=f"job-name={export_job_name}"
+        namespace=DATASETS_NAMESPACE, label_selector=f"job-name={export_job_name}"
     )
     export_pod = next(
         (p for p in export_pods.items if p.status.phase == "Running" and p.status.pod_ip), None

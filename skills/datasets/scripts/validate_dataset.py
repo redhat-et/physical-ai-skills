@@ -1,4 +1,49 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Check a Hugging Face dataset's compatibility with a target model's
+#   expected input format, without downloading it. Two formats: 'lerobot'
+#   (default) reads the dataset's own meta/info.json for robot-policy
+#   compatibility. 'generic' checks flat column names via the HF
+#   datasets-server instead. NEVER invent expected-action-dim/
+#   expected-exterior-cameras/expected-wrist-cameras/expected-feature-keys
+#   from memory or general knowledge of the model -- these are
+#   caller-supplied inputs this tool trusts verbatim and echoes back.
+# parameters:
+#   - name: dataset-repo-id
+#     type: string
+#     required: true
+#   - name: dataset-format
+#     type: string
+#     required: false
+#     default: lerobot
+#     description: One of 'lerobot', 'generic'.
+#   - name: expected-feature-keys
+#     type: array
+#     required: false
+#     description: For 'lerobot', exact LeRobot feature keys. For 'generic', expected column names.
+#   - name: expected-action-dim
+#     type: integer
+#     required: false
+#     description: For dataset-format lerobot only.
+#   - name: expected-exterior-cameras
+#     type: integer
+#     required: false
+#     description: For dataset-format lerobot only.
+#   - name: expected-wrist-cameras
+#     type: integer
+#     required: false
+#     description: For dataset-format lerobot only.
+#   - name: config
+#     type: string
+#     required: false
+#     description: For dataset-format generic only -- defaults to the first available config.
+#   - name: split
+#     type: string
+#     required: false
+#     default: train
+#     description: For dataset-format generic only.
+# ---
 """Check a Hugging Face dataset's compatibility with a target model's
 expected input format, without downloading it. See ../SKILL.md."""
 import argparse

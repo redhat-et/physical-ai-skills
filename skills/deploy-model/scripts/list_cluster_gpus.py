@@ -1,11 +1,20 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   List GPU capacity on the cluster, grouped by GPU product type: total
+#   GPUs, how many are currently in use by running model pods, and VRAM per
+#   GPU where known. Use this before recommending hardware for a new model
+#   deployment.
+# parameters: []
+# ---
 """List GPU capacity on the cluster, grouped by GPU product type. See
 ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+MODELS_NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
 
 # VRAM per GPU product, in GB. Deliberately small and explicit rather than
 # guessed — add an entry here when a new GPU type is added to the cluster.
@@ -49,7 +58,7 @@ def list_cluster_gpus() -> str:
     if not capacity:
         return "No GPU nodes found on the cluster (no nodes with an nvidia.com/gpu.product label)."
 
-    pods = core_api.list_namespaced_pod(namespace=settings.models_namespace)
+    pods = core_api.list_namespaced_pod(namespace=MODELS_NAMESPACE)
     in_use = {}
     for pod in pods.items:
         if pod.status.phase not in ("Running", "Pending"):
