@@ -1,4 +1,45 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Inspect a Hugging Face dataset without downloading it. Three views:
+#   'summary' (default) for size, license, gated status, tags, dates, schema,
+#   and one sample row; 'rows' for a range of raw rows via offset/length;
+#   'file' for one file's raw text (e.g. 'README.md'). Always call
+#   view=summary first and relay its size/license/gated status to the user
+#   before ever calling pull_dataset.
+# parameters:
+#   - name: dataset-repo-id
+#     type: string
+#     required: true
+#     description: HF dataset repo id, e.g. 'GEAR-Dreams/DreamZero-DROID'.
+#   - name: view
+#     type: string
+#     required: false
+#     default: summary
+#     description: One of 'summary', 'rows', 'file'.
+#   - name: filename
+#     type: string
+#     required: false
+#     description: Required when view=file, e.g. 'README.md'.
+#   - name: offset
+#     type: integer
+#     required: false
+#     default: 0
+#     description: Row index to start from, only used when view=rows.
+#   - name: length
+#     type: integer
+#     required: false
+#     default: 5
+#     description: Number of rows to fetch, only used when view=rows (capped at 20).
+#   - name: config
+#     type: string
+#     required: false
+#     description: Dataset config/subset name. Defaults to the first available one.
+#   - name: split
+#     type: string
+#     required: false
+#     default: train
+# ---
 """Inspect a Hugging Face dataset without downloading it. See ../SKILL.md."""
 import argparse
 

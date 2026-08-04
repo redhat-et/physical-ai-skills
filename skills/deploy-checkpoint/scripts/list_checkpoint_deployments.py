@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   List fine-tuned checkpoints currently deployed as live comparison
+#   endpoints (via deploy_checkpoint_model), with real-time status. Separate
+#   from the models skill's LISTING MODELS steps (permanent catalog models)
+#   and list_finetune_runs (checkpoints that exist but may not be deployed
+#   anywhere).
+# parameters: []
+# ---
 """List fine-tuned checkpoints currently deployed as live comparison
 endpoints. See ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+MODELS_NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
 
 FINETUNE_EXP_LABEL = "physical-ai.io/finetune-exp"
 CHECKPOINT_DEPLOYMENT_LABEL = "physical-ai.io/checkpoint-deployment"
@@ -49,7 +59,7 @@ def list_checkpoint_deployments() -> str:
     items = custom_api.list_namespaced_custom_object(
         group="serving.kserve.io",
         version="v1beta1",
-        namespace=settings.models_namespace,
+        namespace=MODELS_NAMESPACE,
         plural="inferenceservices",
         label_selector=CHECKPOINT_DEPLOYMENT_LABEL,
     )
@@ -58,7 +68,7 @@ def list_checkpoint_deployments() -> str:
     if not isvcs:
         return "No checkpoint deployments found."
 
-    all_pods = core_api.list_namespaced_pod(namespace=settings.models_namespace)
+    all_pods = core_api.list_namespaced_pod(namespace=MODELS_NAMESPACE)
     pods_by_isvc: dict[str, list] = {}
     for pod in all_pods.items:
         name = (pod.metadata.labels or {}).get("serving.kserve.io/inferenceservice")

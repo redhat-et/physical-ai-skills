@@ -1,4 +1,47 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Generate the Kustomize/KServe manifests to add a new vLLM model to the
+#   platform's model catalog, following this repo's existing patterns. Call
+#   list_cluster_gpus and estimate_model_footprint first to choose
+#   gpu-product and tensor-parallel-size -- don't guess these. This only
+#   generates text; it does not deploy anything.
+# parameters:
+#   - name: model-name
+#     type: string
+#     required: true
+#     description: Lowercase alphanumeric + hyphens, e.g. 'my-new-model'.
+#   - name: hf-repo-id
+#     type: string
+#     required: true
+#     description: Hugging Face repo id to download and serve.
+#   - name: tensor-parallel-size
+#     type: integer
+#     required: true
+#     description: From estimate_model_footprint -- don't guess.
+#   - name: output-kind
+#     type: string
+#     required: true
+#     description: One of 'chat', 'image', 'video'.
+#   - name: gpu-product
+#     type: string
+#     required: false
+#     default: NVIDIA-L40S
+#     description: See list_cluster_gpus for what's available.
+#   - name: context-len
+#     type: integer
+#     required: false
+#     default: 8192
+#   - name: quantization
+#     type: string
+#     required: false
+#     default: none
+#     description: vLLM quantization scheme (e.g. 'fp8'), or 'none'.
+#   - name: pvc-size-gb
+#     type: integer
+#     required: false
+#     default: 100
+# ---
 """Generate the Kustomize/KServe manifests to add a new vLLM model to the
 platform's model catalog. See ../SKILL.md."""
 import argparse

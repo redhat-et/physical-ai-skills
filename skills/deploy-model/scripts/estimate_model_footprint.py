@@ -1,4 +1,27 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Estimate the GPU memory footprint of a Hugging Face model and how many of
+#   a given GPU type it would need. Reads parameter count from the model's
+#   safetensors metadata -- no weights are downloaded. Call this before
+#   generate_model_manifests to pick a tensor-parallel-size, and call
+#   list_cluster_gpus first to know what GPU types/capacity are available.
+# parameters:
+#   - name: hf-repo-id
+#     type: string
+#     required: true
+#     description: Hugging Face repo id, e.g. 'Qwen/Qwen3-8B'.
+#   - name: dtype
+#     type: string
+#     required: false
+#     default: auto
+#     description: Weight dtype to size for, e.g. 'BF16', 'FP8', 'INT4'.
+#   - name: gpu-product
+#     type: string
+#     required: false
+#     default: NVIDIA-L40S
+#     description: See list_cluster_gpus for what's available.
+# ---
 """Estimate the GPU memory footprint of a Hugging Face model and how many of
 a given GPU type it would need. See ../SKILL.md."""
 import argparse

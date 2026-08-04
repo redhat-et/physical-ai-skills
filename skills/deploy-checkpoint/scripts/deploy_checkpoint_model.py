@@ -1,12 +1,33 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Start deploying a finished fine-tuning checkpoint as a live, callable
+#   model endpoint, separate from the base model, for side-by-side testing.
+#   Only call this for a checkpoint whose fine-tuning run has actually
+#   succeeded (check get_finetune_run_status first). This only starts the
+#   process -- call get_checkpoint_deployment_status afterward, repeatedly,
+#   to advance and finish standing up the InferenceService.
+# parameters:
+#   - name: exp-name
+#     type: string
+#     required: true
+#     description: The exp-name passed to submit_finetune_run.
+#   - name: model-name
+#     type: string
+#     required: false
+#     default: pi05
+#     description: Only 'pi05' is supported so far.
+# ---
 """Start deploying a finished fine-tuning checkpoint as a live, callable
 model endpoint, separate from the base model, for side-by-side testing. See
 ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
+MODELS_NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
 
 FINETUNE_EXP_LABEL = "physical-ai.io/finetune-exp"
 CHECKPOINT_DEPLOYMENT_LABEL = "physical-ai.io/checkpoint-deployment"
@@ -91,7 +112,7 @@ def deploy_checkpoint_model(exp_name: str, model_name: str = "pi05") -> str:
     checkpoint_pvc_name = _checkpoint_pvc_name(exp_name)
     try:
         core_api.read_namespaced_persistent_volume_claim(
-            name=checkpoint_pvc_name, namespace=settings.datasets_namespace
+            name=checkpoint_pvc_name, namespace=DATASETS_NAMESPACE
         )
     except client.exceptions.ApiException as e:
         if e.status == 404:
@@ -105,7 +126,7 @@ def deploy_checkpoint_model(exp_name: str, model_name: str = "pi05") -> str:
     labels = {FINETUNE_EXP_LABEL: exp_name, CHECKPOINT_DEPLOYMENT_LABEL: "true"}
     try:
         core_api.create_namespaced_persistent_volume_claim(
-            namespace=settings.models_namespace,
+            namespace=MODELS_NAMESPACE,
             body={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -128,7 +149,7 @@ timeout {EXPORT_JOB_TIMEOUT_SECONDS} python3 -m http.server {CHECKPOINT_EXPORT_P
 """
     try:
         batch_api.create_namespaced_job(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             body={
                 "apiVersion": "batch/v1",
                 "kind": "Job",

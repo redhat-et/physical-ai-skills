@@ -1,13 +1,49 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Start a fine-tuning run for a model against an already-staged dataset.
+#   Runs as a real KFP pipeline consuming real GPU-hours on the shared
+#   cluster. Only call this after discussing the recipe with the user and
+#   they've explicitly said to proceed -- never call this speculatively.
+#   Call get_finetune_run_status afterward to check progress.
+# parameters:
+#   - name: dataset-pvc-name
+#     type: string
+#     required: true
+#     description: PVC name of an already-pull_dataset-staged dataset.
+#   - name: exp-name
+#     type: string
+#     required: true
+#     description: Short experiment name, lowercase alphanumeric and hyphens.
+#   - name: model-name
+#     type: string
+#     required: false
+#     default: pi05
+#     description: Only 'pi05' exists so far.
+#   - name: dataset-subset
+#     type: string
+#     required: false
+#     description: Subfolder within a multi-dataset repo PVC, if applicable.
+#   - name: chunk-size
+#     type: integer
+#     required: false
+#   - name: n-action-steps
+#     type: integer
+#     required: false
+#   - name: empty-cameras
+#     type: integer
+#     required: false
+# ---
 """Start a fine-tuning run for a model against an already-staged dataset.
 See ../SKILL.md."""
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 # Resolved from this script's own location, not a dotted platform_agent.skills
 # path -- so this still works if the fine-tuning skill folder is renamed,
@@ -83,11 +119,11 @@ def submit_finetune_run(
 
     try:
         pvc = core_api.read_namespaced_persistent_volume_claim(
-            name=dataset_pvc_name, namespace=settings.datasets_namespace
+            name=dataset_pvc_name, namespace=DATASETS_NAMESPACE
         )
     except client.exceptions.ApiException as e:
         if e.status == 404:
-            return f"Dataset PVC '{dataset_pvc_name}' not found in '{settings.datasets_namespace}'. Pull it first with pull_dataset."
+            return f"Dataset PVC '{dataset_pvc_name}' not found in '{DATASETS_NAMESPACE}'. Pull it first with pull_dataset."
         return f"Could not read PVC '{dataset_pvc_name}': {e.reason}"
 
     dataset_repo_id = dataset_repo_id_from_pvc(pvc)
@@ -110,7 +146,7 @@ def submit_finetune_run(
     checkpoint_pvc_name = _checkpoint_pvc_name(exp_name)
     try:
         core_api.create_namespaced_persistent_volume_claim(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             body={
                 "apiVersion": "v1",
                 "kind": "PersistentVolumeClaim",
@@ -126,7 +162,7 @@ def submit_finetune_run(
         if e.status != 409:
             return f"Failed to create checkpoint PVC: {e.reason}"
         existing_pvc = core_api.read_namespaced_persistent_volume_claim(
-            name=checkpoint_pvc_name, namespace=settings.datasets_namespace
+            name=checkpoint_pvc_name, namespace=DATASETS_NAMESPACE
         )
         existing_run_id = (existing_pvc.metadata.annotations or {}).get(FINETUNE_RUN_ID_ANNOTATION)
         if existing_run_id and get_pipeline_run_state(existing_run_id) != "FAILED":
@@ -169,7 +205,7 @@ def submit_finetune_run(
     try:
         core_api.patch_namespaced_persistent_volume_claim(
             name=checkpoint_pvc_name,
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             body={"metadata": {"annotations": {FINETUNE_RUN_ID_ANNOTATION: run_id}}},
         )
     except client.exceptions.ApiException:

@@ -1,11 +1,30 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Tear down a checkpoint deployment created by deploy_checkpoint_model: its
+#   InferenceService, HTTPScaledObject, and the PVCs/Jobs created for it.
+#   Does NOT touch the original fine-tuning checkpoint PVC -- that can still
+#   be redeployed later with deploy_checkpoint_model.
+# parameters:
+#   - name: exp-name
+#     type: string
+#     required: true
+#     description: The exp-name passed to deploy_checkpoint_model.
+#   - name: model-name
+#     type: string
+#     required: false
+#     default: pi05
+#     description: Only 'pi05' is supported so far.
+# ---
 """Tear down a checkpoint deployment created by deploy_checkpoint_model. See
 ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
+MODELS_NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
 
 _SUPPORTED_MODELS = ("pi05",)
 
@@ -75,7 +94,7 @@ def takedown_checkpoint_model(exp_name: str, model_name: str = "pi05") -> str:
     ):
         try:
             custom_api.delete_namespaced_custom_object(
-                group=group, version=version, namespace=settings.models_namespace, plural=plural, name=name
+                group=group, version=version, namespace=MODELS_NAMESPACE, plural=plural, name=name
             )
             removed.append(name)
         except client.exceptions.ApiException as e:
@@ -84,15 +103,15 @@ def takedown_checkpoint_model(exp_name: str, model_name: str = "pi05") -> str:
 
     for pvc_name in (_model_cache_pvc_name(isvc_name), _triton_cache_pvc_name(isvc_name)):
         try:
-            core_api.delete_namespaced_persistent_volume_claim(name=pvc_name, namespace=settings.models_namespace)
+            core_api.delete_namespaced_persistent_volume_claim(name=pvc_name, namespace=MODELS_NAMESPACE)
             removed.append(pvc_name)
         except client.exceptions.ApiException as e:
             if e.status != 404:
                 return f"Failed to delete PVC '{pvc_name}': {e.reason}"
 
     for namespace, job_name in (
-        (settings.datasets_namespace, _export_job_name(exp_name)),
-        (settings.models_namespace, _import_job_name(isvc_name)),
+        (DATASETS_NAMESPACE, _export_job_name(exp_name)),
+        (MODELS_NAMESPACE, _import_job_name(isvc_name)),
     ):
         try:
             batch_api.delete_namespaced_job(name=job_name, namespace=namespace, propagation_policy="Background")

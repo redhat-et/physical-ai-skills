@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   List fine-tuning experiments started on this cluster. Call this when
+#   asked about fine-tuning runs in general, or when the exact exp-name
+#   isn't known -- get_finetune_run_status requires the exact exp-name and
+#   has no other way to look one up.
+# parameters: []
+# ---
 """List fine-tuning experiments started on this cluster. See ../SKILL.md."""
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 # Resolved from this script's own location, not a dotted platform_agent.skills
 # path -- see submit_finetune_run.py for why.
@@ -48,7 +57,7 @@ def list_finetune_runs() -> str:
     """
     core_api = _get_core_api()
     pvcs = core_api.list_namespaced_persistent_volume_claim(
-        namespace=settings.datasets_namespace,
+        namespace=DATASETS_NAMESPACE,
         label_selector=FINETUNE_EXP_LABEL,
     )
 

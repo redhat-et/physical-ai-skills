@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Check the status of a fine-tuning run started by submit_finetune_run.
+#   Reports the pipeline run's overall state and per-stage state, plus the
+#   resolved recipe and eval metrics once logged to MLflow. Read-only --
+#   the pipeline advances on its own, this doesn't need to be called
+#   repeatedly to make progress happen.
+# parameters:
+#   - name: exp-name
+#     type: string
+#     required: true
+#     description: The exp-name passed to submit_finetune_run.
+# ---
 """Check the status of a fine-tuning run started by submit_finetune_run. See
 ../SKILL.md."""
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 # Resolved from this script's own location, not a dotted platform_agent.skills
 # path -- see submit_finetune_run.py for why.
@@ -56,7 +70,7 @@ def get_finetune_run_status(exp_name: str) -> str:
     checkpoint_pvc_name = _checkpoint_pvc_name(exp_name)
     try:
         pvc = core_api.read_namespaced_persistent_volume_claim(
-            name=checkpoint_pvc_name, namespace=settings.datasets_namespace
+            name=checkpoint_pvc_name, namespace=DATASETS_NAMESPACE
         )
     except client.exceptions.ApiException as e:
         if e.status == 404:

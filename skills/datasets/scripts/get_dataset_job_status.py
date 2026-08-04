@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
+# ---
+# description: >
+#   Check the status of a dataset download started by pull_dataset: whether
+#   the Job succeeded/failed/is still running, and the backing PVC's bound
+#   state.
+# parameters:
+#   - name: dataset-name
+#     type: string
+#     required: true
+#     description: The dataset-name passed to pull_dataset.
+# ---
 """Check the status of a dataset download started by pull_dataset. See ../SKILL.md."""
 import argparse
+import os
 
 from kubernetes import client
 
-from platform_agent.config import settings
+DATASETS_NAMESPACE = os.environ.get("DATASETS_NAMESPACE", "physical-ai")
 
 
 def _get_clients():
@@ -30,7 +42,7 @@ def get_dataset_job_status(dataset_name: str) -> str:
         # read_namespaced_job (not _status) -- the /status subresource needs
         # separate RBAC from the base "jobs" resource we're actually granted;
         # the plain read already returns the full object including .status.
-        job = batch_api.read_namespaced_job(name=job_name, namespace=settings.datasets_namespace)
+        job = batch_api.read_namespaced_job(name=job_name, namespace=DATASETS_NAMESPACE)
     except client.exceptions.ApiException as e:
         if e.status == 404:
             return f"No download Job '{job_name}' found — has pull_dataset been called for '{dataset_name}'?"
@@ -47,7 +59,7 @@ def get_dataset_job_status(dataset_name: str) -> str:
         state = "pending"
 
     try:
-        pvc = core_api.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=settings.datasets_namespace)
+        pvc = core_api.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=DATASETS_NAMESPACE)
         pvc_phase = pvc.status.phase
     except client.exceptions.ApiException:
         pvc_phase = "unknown"
@@ -56,14 +68,14 @@ def get_dataset_job_status(dataset_name: str) -> str:
 
     if state == "failed":
         pods = core_api.list_namespaced_pod(
-            namespace=settings.datasets_namespace,
+            namespace=DATASETS_NAMESPACE,
             label_selector=f"job-name={job_name}",
         )
         if pods.items:
             try:
                 logs = core_api.read_namespaced_pod_log(
                     name=pods.items[0].metadata.name,
-                    namespace=settings.datasets_namespace,
+                    namespace=DATASETS_NAMESPACE,
                     tail_lines=30,
                 )
                 result += f"\nLast 30 log lines:\n{logs}"
