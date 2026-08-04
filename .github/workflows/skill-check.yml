@@ -1,0 +1,13 @@
+name: Skill Check
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  skill-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npx skill-check . --format github --no-security-scan
