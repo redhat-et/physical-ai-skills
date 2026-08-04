@@ -1,6 +1,6 @@
 ---
 name: deploy-checkpoint
-description: Use to stand up a finished fine-tuning checkpoint as a live model endpoint for testing or comparison against the base model.
+description: Use when standing up a finished fine-tuning checkpoint as a live model endpoint for testing or comparison against the base model.
 ---
 DEPLOY CHECKPOINT — for standing up a fine-tuned checkpoint as a real,
 callable model endpoint.
