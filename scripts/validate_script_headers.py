@@ -44,11 +44,21 @@ def validate_header(path: Path) -> list[str]:
     except yaml.YAMLError as e:
         return [f"header is not valid YAML: {e}"]
 
+    if not isinstance(meta, dict):
+        return [f"header YAML must be a mapping, got {type(meta).__name__}"]
+
     errors = []
     if not meta.get("description"):
         errors.append("header missing required 'description' field")
 
-    for i, raw_param in enumerate(meta.get("parameters", []) or []):
+    raw_params = meta.get("parameters", []) or []
+    if not isinstance(raw_params, list):
+        return [*errors, f"'parameters' must be a list, got {type(raw_params).__name__}"]
+
+    for i, raw_param in enumerate(raw_params):
+        if not isinstance(raw_param, dict):
+            errors.append(f"parameter #{i} is not a mapping (got {type(raw_param).__name__})")
+            continue
         label = raw_param.get("name", f"#{i}")
         for required_field in ("name", "type"):
             if not raw_param.get(required_field):
