@@ -11,8 +11,15 @@ from platform_agent.config import settings
 
 # Resolved from this script's own location, not a dotted platform_agent.skills
 # path -- see submit_finetune_run.py for why.
-sys.path.insert(0, str(Path(__file__).resolve().parent / "helper"))
-from finetune_pipeline import get_finetune_eval_metrics, get_pipeline_run_status  # noqa: E402
+def _resolve_lib_path() -> None:
+    here = Path(__file__).resolve().parent
+    if str(here) not in sys.path:
+        sys.path.insert(0, str(here))
+
+
+_resolve_lib_path()
+
+from lib.finetune_pipeline import get_finetune_eval_metrics, get_pipeline_run_status  # noqa: E402
 
 FINETUNE_RUN_ID_ANNOTATION = "physical-ai.io/kfp-run-id"
 
