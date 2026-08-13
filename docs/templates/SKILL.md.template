@@ -1,0 +1,30 @@
+---
+name: skill-name-here
+description: Use when <specific situations/tasks/trigger phrases that should
+  route to this skill>. Call out neighboring skills this could be confused
+  with, e.g. "for X instead, see the other-skill skill."
+---
+SKILL NAME IN CAPS -- one paragraph covering: what this skill is for, what
+it explicitly does NOT cover (point to the neighboring skill that does
+instead), and any invariant the agent must never violate (a namespace, a
+resource kind/name, a value it must echo back verbatim rather than invent).
+
+<If this skill has scripts, add a "## Scripts" section. If it's
+instructions-only -- pure cluster tool calls or static knowledge, like
+model-specs or new-model-runtime -- skip straight to numbered steps
+instead and delete the Scripts section entirely.>
+
+## Scripts
+
+Run via the shell tool: `python3 "$SKILLS_ROOT/skill-name-here/scripts/your_script.py" --arg value`.
+
+<For each script: what it does, when to call it, and what to do with its
+output. If a task spans multiple scripts run in sequence, spell out the
+order and what to check between steps -- see models/SKILL.md's "SCALING UP
+OR DOWN" section for a worked example of sequencing a script call with a
+before/after status check.>
+
+<If this skill needs static reference material an agent should read but
+that a script shouldn't own (e.g. per-model specs), put it under a
+references/ subdirectory next to scripts/ -- see model-specs/references/
+for the pattern -- and point to it by exact path here.>
