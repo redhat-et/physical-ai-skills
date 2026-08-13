@@ -24,15 +24,21 @@ are (mostly) instructions-only. Copy
 
 ## 2. Writing `SKILL.md`
 
-Frontmatter is just `name` and `description`. The `description` is the
-*only* thing an agent sees to decide whether this skill applies to a given
-request, so:
+Required frontmatter is `name` and `description` (the
+[agentskills.io spec](https://agentskills.io/specification) also defines
+optional `license`, `compatibility`, `metadata`, and `allowed-tools`
+fields, but no skill in this repo needs them yet):
 
-- Lead with concrete trigger phrases/tasks, not an abstract summary.
-- If another skill covers a similar-sounding request, say so explicitly
-  (e.g. models/SKILL.md's description distinguishes itself from
-  deploy-model and deploy-checkpoint). This is how an agent picks the
-  right skill instead of guessing.
+- `name` must exactly match the skill's directory name, 1-64 characters,
+  lowercase letters/numbers/hyphens only, no leading/trailing or
+  consecutive hyphens (`skill-check` and CI reject anything else).
+- `description` is the *only* thing an agent sees to decide whether this
+  skill applies to a given request (max 1024 characters), so:
+  - Lead with concrete trigger phrases/tasks, not an abstract summary.
+  - If another skill covers a similar-sounding request, say so explicitly
+    (e.g. models/SKILL.md's description distinguishes itself from
+    deploy-model and deploy-checkpoint). This is how an agent picks the
+    right skill instead of guessing.
 
 In the body, state invariants the agent must not violate -- a namespace it
 must use, a value it must echo back verbatim instead of inventing, a

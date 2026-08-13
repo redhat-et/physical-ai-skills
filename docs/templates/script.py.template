@@ -19,7 +19,7 @@
 #   - name: example-list
 #     type: array
 #     required: false
-#     description: Use `type: array` for a repeatable/list-valued argument.
+#     description: "Use array for a repeatable, list-valued argument."
 # ---
 """One-line docstring restating what this script does. See ../SKILL.md."""
 import argparse
