@@ -77,13 +77,8 @@ below):
   - This header is how the platform's MCP server (`get_script`) tells an
     agent the script's contract without exposing its source, and how it
     validates arguments before running it via `run_script`.
-- **Plain stdout, no structured output channel.** Whatever `print()`s in
-  `main()` is the entire result an agent sees -- make it self-explanatory
-  on its own (see `scale_model.py`'s return strings for the pattern).
-  There is currently no supported way for a script to return an image/video
-  artifact; that's why `call_model` was dropped rather than migrated (see
-  `models/SKILL.md`'s NOTE) -- don't try to route media output through a
-  script until that's redesigned.
+- **Plain stdout/stderr, no structured output channel.** `pai-mcp-server`'s
+  `run_script` returns both stdout and stderr to the calling agent.
 
 ## 4. Validate locally before opening a PR
 

@@ -27,14 +27,20 @@ import os
 
 # Read config that varies per-environment from os.environ, not a shared
 # settings import -- this script runs standalone via a shell/exec tool,
-# not inside any particular Python package's process.
-NAMESPACE = os.environ.get("MODELS_NAMESPACE", "physical-ai-models")
+# not inside any particular Python package's process. Use the namespace
+# env var this skill's other scripts already read (e.g. DATASETS_NAMESPACE,
+# MODELS_NAMESPACE) and its matching default -- don't copy MODELS_NAMESPACE/
+# "physical-ai-models" from this template if that's not actually this
+# skill's namespace. Delete this line entirely if the script doesn't touch
+# a namespaced resource.
+# NAMESPACE = os.environ.get("<SKILL>_NAMESPACE", "<default-namespace>")
 
 
-def do_the_thing(example_arg: str, optional_flag: int = 0) -> str:
+def do_the_thing(example_arg: str, optional_flag: int = 0, example_list: list[str] | None = None) -> str:
     """Implementation goes here. Return a single plain string -- this
-    return value (via stdout, see main()) is the entire output an agent
-    sees, so it should be self-explanatory without extra context."""
+    return value, printed to stdout by main(), plus anything on stderr, is
+    the entire output an agent sees, so it should be self-explanatory
+    without extra context."""
     raise NotImplementedError
 
 
@@ -42,10 +48,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--example-arg", required=True, help="What this argument is for.")
     parser.add_argument("--optional-flag", type=int, default=0, help="What happens when this is omitted.")
+    parser.add_argument(
+        "--example-list", nargs="*", default=None,
+        help="Use array for a repeatable, list-valued argument.",
+    )
     args = parser.parse_args()
 
     try:
-        print(do_the_thing(args.example_arg, args.optional_flag))
+        print(do_the_thing(args.example_arg, args.optional_flag, args.example_list))
     except Exception as e:
         print(f"Unexpected error: {e}")
         raise SystemExit(1)
