@@ -47,8 +47,9 @@ resource kind it must not confuse with another. See `models/SKILL.md`'s
 for the pattern.
 
 If the skill has scripts, document the exact invocation (`python3
-"$SKILLS_ROOT/<skill>/scripts/<script>.py" --arg value`) and, if a task
-needs more than one script call or a before/after check, spell out the
+"$SKILLS_ROOT/<skill>/scripts/<script>.py" --example-arg value`, replacing
+`--example-arg` with the script's actual declared option name(s)) and, if a
+task needs more than one script call or a before/after check, spell out the
 order -- don't assume the agent will infer sequencing on its own.
 
 ## 3. Writing a script

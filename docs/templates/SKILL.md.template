@@ -16,7 +16,8 @@ instead and delete the Scripts section entirely.>
 
 ## Scripts
 
-Run via the shell tool: `python3 "$SKILLS_ROOT/skill-name-here/scripts/your_script.py" --arg value`.
+Run via the shell tool: `python3 "$SKILLS_ROOT/skill-name-here/scripts/your_script.py" --example-arg value`
+(replace `--example-arg` with the option name(s) the script actually declares).
 
 <For each script: what it does, when to call it, and what to do with its
 output. If a task spans multiple scripts run in sequence, spell out the
