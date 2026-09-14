@@ -33,6 +33,26 @@
 #   - name: empty-cameras
 #     type: integer
 #     required: false
+#   - name: training-profile
+#     type: string
+#     required: false
+#     default: expert_only
+#   - name: training-steps
+#     type: integer
+#     required: false
+#     default: 50
+#   - name: batch-size-per-gpu
+#     type: integer
+#     required: false
+#   - name: num-workers
+#     type: integer
+#     required: false
+#   - name: save-freq
+#     type: integer
+#     required: false
+#   - name: compile-model
+#     type: boolean
+#     required: false
 # ---
 """Start a fine-tuning run for a model against an already-staged dataset.
 See ../SKILL.md."""
@@ -58,7 +78,7 @@ def _resolve_lib_path() -> None:
 _resolve_lib_path()
 
 from lib.finetune_pipeline import get_pipeline_run_state, log_finetune_run_params, submit_pipeline_run  # noqa: E402
-from lib.finetune_recipes import CHECKPOINT_MOUNT_PATH, dataset_mount_path, get_recipe  # noqa: E402
+from lib.finetune_recipes import CHECKPOINT_MOUNT_PATH, get_recipe  # noqa: E402
 
 FINETUNE_EXP_LABEL = "physical-ai.io/finetune-exp"
 FINETUNE_RUN_ID_ANNOTATION = "physical-ai.io/kfp-run-id"
@@ -90,6 +110,25 @@ def _checkpoint_pvc_name(exp_name: str) -> str:
     return f"finetune-{exp_name}-checkpoint-pvc"
 
 
+def _prepared_dataset_pvc_name(exp_name: str) -> str:
+    return f"finetune-{exp_name}-prepared-dataset-pvc"
+
+
+def _working_storage_request(source_pvc) -> str:
+    """Request a copy volume with roughly twice the source PVC capacity."""
+    requested = ((source_pvc.spec.resources.requests or {}).get("storage") if source_pvc.spec.resources else None) or "200Gi"
+    import re
+
+    match = re.fullmatch(r"(\d+)(Gi|G|Ti|T)", requested)
+    if not match:
+        return "200Gi"
+    amount = int(match.group(1)) * 2
+    unit = match.group(2)
+    if unit in {"G", "T"}:
+        unit = f"{unit}i"
+    return f"{amount}{unit}"
+
+
 def submit_finetune_run(
     dataset_pvc_name: str,
     exp_name: str,
@@ -98,10 +137,16 @@ def submit_finetune_run(
     chunk_size: int | None = None,
     n_action_steps: int | None = None,
     empty_cameras: int | None = None,
+    training_profile: str = "expert_only",
+    training_steps: int = 50,
+    batch_size_per_gpu: int | None = None,
+    num_workers: int | None = None,
+    save_freq: int | None = None,
+    compile_model: bool | None = None,
 ) -> str:
     """Start a fine-tuning run for a model against an already-staged dataset.
 
-    This runs as a real KFP pipeline (train -> evaluate for pi05) against
+    This runs as a real KFP pipeline (prepare -> train -> evaluate for pi05) against
     RHOAI's Data Science Pipelines, consuming real GPU-hours on the shared
     cluster for potentially hours. Only call this after you've discussed
     the recipe (which model, which dataset, roughly how long it'll take)
@@ -139,11 +184,18 @@ def submit_finetune_run(
             chunk_size=chunk_size,
             n_action_steps=n_action_steps,
             empty_cameras=empty_cameras,
+            training_profile=training_profile,
+            training_steps=training_steps,
+            batch_size_per_gpu=batch_size_per_gpu,
+            num_workers=num_workers,
+            save_freq=save_freq,
+            compile_model=compile_model,
         )
     except ValueError as e:
         return str(e)
 
     checkpoint_pvc_name = _checkpoint_pvc_name(exp_name)
+    prepared_dataset_pvc_name = _prepared_dataset_pvc_name(exp_name)
     try:
         core_api.create_namespaced_persistent_volume_claim(
             namespace=DATASETS_NAMESPACE,
@@ -177,8 +229,34 @@ def submit_finetune_run(
         # running for debugging (see submit_pipeline_run's ttl_seconds
         # docstring), so they'd still be mounting this PVC and a delete would
         # just hang in Terminating behind the pvc-protection finalizer.
-        # lerobot-train's own --output_dir semantics already overwrite a
-        # prior run's contents on a fresh run, so this is safe.
+                # lerobot-train's own --output_dir semantics already overwrite a
+                # prior run's contents on a fresh run, so this is safe.
+
+    try:
+        core_api.create_namespaced_persistent_volume_claim(
+            namespace=DATASETS_NAMESPACE,
+            body={
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "metadata": {
+                    "name": prepared_dataset_pvc_name,
+                    "labels": {FINETUNE_EXP_LABEL: exp_name, "physical-ai.io/prepared-dataset": "true"},
+                },
+                "spec": {
+                    "accessModes": ["ReadWriteOnce"],
+                    "resources": {"requests": {"storage": _working_storage_request(pvc)}},
+                    "storageClassName": "gp3-csi",
+                },
+            },
+        )
+    except client.exceptions.ApiException as e:
+        if e.status != 409:
+            return f"Failed to create prepared-dataset PVC: {e.reason}"
+        existing_prepared = core_api.read_namespaced_persistent_volume_claim(
+            name=prepared_dataset_pvc_name, namespace=DATASETS_NAMESPACE
+        )
+        if existing_prepared.metadata.labels and existing_prepared.metadata.labels.get(FINETUNE_EXP_LABEL) != exp_name:
+            return f"Prepared-dataset PVC '{prepared_dataset_pvc_name}' belongs to another experiment."
 
     # dataset_repo_id here is always the plain repo id pull_dataset stored on
     # the PVC (never subset-qualified -- pull_dataset always downloads the
@@ -193,8 +271,9 @@ def submit_finetune_run(
             model_name=model_name,
             stages=stages,
             dataset_pvc_name=dataset_pvc_name,
+            prepared_dataset_pvc_name=prepared_dataset_pvc_name,
             checkpoint_pvc_name=checkpoint_pvc_name,
-            dataset_mount_path=dataset_mount_path(dataset_repo_id),
+            dataset_mount_path="/mnt/source_dataset",
             checkpoint_mount_path=CHECKPOINT_MOUNT_PATH,
         )
     except Exception as e:
@@ -205,6 +284,14 @@ def submit_finetune_run(
     try:
         core_api.patch_namespaced_persistent_volume_claim(
             name=checkpoint_pvc_name,
+            namespace=DATASETS_NAMESPACE,
+            body={"metadata": {"annotations": {FINETUNE_RUN_ID_ANNOTATION: run_id}}},
+        )
+    except client.exceptions.ApiException:
+        pass
+    try:
+        core_api.patch_namespaced_persistent_volume_claim(
+            name=prepared_dataset_pvc_name,
             namespace=DATASETS_NAMESPACE,
             body={"metadata": {"annotations": {FINETUNE_RUN_ID_ANNOTATION: run_id}}},
         )
@@ -229,6 +316,12 @@ def main() -> None:
     parser.add_argument("--chunk-size", type=int, default=None)
     parser.add_argument("--n-action-steps", type=int, default=None)
     parser.add_argument("--empty-cameras", type=int, default=None)
+    parser.add_argument("--training-profile", default="expert_only", choices=("expert_only", "full_finetune"))
+    parser.add_argument("--training-steps", type=int, default=50)
+    parser.add_argument("--batch-size-per-gpu", type=int, default=None)
+    parser.add_argument("--num-workers", type=int, default=None)
+    parser.add_argument("--save-freq", type=int, default=None)
+    parser.add_argument("--compile-model", action=argparse.BooleanOptionalAction, default=None)
     args = parser.parse_args()
 
     try:
@@ -241,6 +334,12 @@ def main() -> None:
                 args.chunk_size,
                 args.n_action_steps,
                 args.empty_cameras,
+                args.training_profile,
+                args.training_steps,
+                args.batch_size_per_gpu,
+                args.num_workers,
+                args.save_freq,
+                args.compile_model,
             )
         )
     except Exception as e:

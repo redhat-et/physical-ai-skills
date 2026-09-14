@@ -81,6 +81,7 @@ def submit_pipeline_run(
     model_name: str,
     stages: list[dict],
     dataset_pvc_name: str,
+    prepared_dataset_pvc_name: str,
     checkpoint_pvc_name: str,
     dataset_mount_path: str,
     checkpoint_mount_path: str,
@@ -89,12 +90,13 @@ def submit_pipeline_run(
     order, each depending on the previous) and submits a run. Returns
     (run_id, dashboard_url).
 
-    Mounts are the same PVCs/paths the raw-Job version used -- dataset
-    read-write (kfp.kubernetes.mount_pvc has no read-only flag in this SDK
-    version; the training/eval scripts never write to it in practice, so
-    this is a minor loss of defense-in-depth, not a functional gap) and
-    checkpoint read-write. GPU stages get the same NVIDIA-L40S node
-    selector the raw Jobs used.
+    The source dataset PVC is mounted at /mnt/source_dataset and the
+    run-specific prepared-dataset PVC at /mnt/prepared_dataset. The prep
+    stage copies the source before making any conversion/statistics changes;
+    train/evaluate consume only the prepared copy. kfp.kubernetes.mount_pvc
+    has no read-only flag in this SDK version, so immutability is enforced by
+    the stage commands and by using separate PVCs. GPU stages get the same
+    NVIDIA-L40S node selector the raw Jobs used.
 
     ttl_seconds_after_success (Argo's ttlStrategy.secondsAfterSuccess) has
     Argo delete the whole completed Workflow -- pods included -- 15 minutes
@@ -118,7 +120,10 @@ def submit_pipeline_run(
             kfp_kubernetes.use_secret_as_env(
                 task, secret_name="huggingface-token", secret_key_to_env={"HF_TOKEN": "HF_TOKEN"}, optional=True
             )
-            kfp_kubernetes.mount_pvc(task, pvc_name=dataset_pvc_name, mount_path=dataset_mount_path)
+            if stage.get("needs_source_dataset", False):
+                kfp_kubernetes.mount_pvc(task, pvc_name=dataset_pvc_name, mount_path="/mnt/source_dataset")
+            if stage.get("needs_prepared_dataset", True):
+                kfp_kubernetes.mount_pvc(task, pvc_name=prepared_dataset_pvc_name, mount_path="/mnt/prepared_dataset")
             kfp_kubernetes.mount_pvc(task, pvc_name=checkpoint_pvc_name, mount_path=checkpoint_mount_path)
             # Without this, /dev/shm defaults to a tiny node-backed tmpfs --
             # confirmed live: lerobot-train's DataLoader workers (multiprocessing,

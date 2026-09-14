@@ -19,6 +19,7 @@ needed either -- lerobot-train is a normal CLI.
 """
 
 import json
+from pathlib import Path
 
 LEROBOT_IMAGE = "huggingface/lerobot-gpu:latest"
 
@@ -58,6 +59,8 @@ def _fetch_lerobot_info(dataset_repo_id: str) -> dict | str:
         return json.load(f)
 
 DATASET_MOUNT_ROOT = "/mnt/lerobot_home"
+SOURCE_DATASET_ROOT = "/mnt/source_dataset"
+PREPARED_DATASET_ROOT = "/mnt/prepared_dataset"
 CHECKPOINT_MOUNT_PATH = "/mnt/checkpoint"
 
 # The base checkpoint to fine-tune from -- same HF repo our pi05
@@ -77,7 +80,7 @@ PI05_PRETRAINED_PATH = "lerobot/pi05_base"
 # Shared between _train_script's actual --policy.normalization_mapping flag
 # and get_recipe's logged params -- a single source of truth so the two can't
 # drift apart.
-NORMALIZATION_MAPPING = '{"ACTION": "MEAN_STD", "STATE": "MEAN_STD", "VISUAL": "IDENTITY"}'
+NORMALIZATION_MAPPING = '{"ACTION": "QUANTILES", "STATE": "QUANTILES", "VISUAL": "IDENTITY"}'
 
 # Confirmed live via lerobot-train against lerobot/pi05_base with no
 # n_action_steps override: PI05Config.validate() reports its own default as
@@ -104,6 +107,16 @@ def dataset_mount_path(dataset_repo_id: str) -> str:
     which then failed anyway since the mount is read-only).
     """
     return f"{DATASET_MOUNT_ROOT}/{dataset_repo_id}"
+
+
+def _pi05_spec_yaml() -> str:
+    """Load the executable Pi0.5 compatibility contract from model-specs.
+
+    The controller embeds this text into the prep stage because pipeline pods
+    run the LeRobot image, not this repository checkout.
+    """
+    spec_path = Path(__file__).resolve().parents[3] / "model-specs" / "references" / "pi05.yaml"
+    return spec_path.read_text(encoding="utf-8")
 
 
 # How many trailing episodes to reserve for eval. Previously the eval script
@@ -141,6 +154,268 @@ def _checkpoint_dir(exp_name: str) -> str:
     return f"{CHECKPOINT_MOUNT_PATH}/{exp_name}/checkpoints/last/pretrained_model"
 
 
+def _prepare_script(
+    dataset_repo_id: str,
+    chunk_size: int | None,
+    n_action_steps: int | None,
+    empty_cameras: int | None,
+    training_profile: str,
+    training_steps: int,
+    batch_size_per_gpu: int | None,
+    num_workers: int | None,
+    save_freq: int | None,
+    compile_model: bool | None,
+) -> str:
+    """Prepare an isolated, validated LeRobot working copy for Pi0.5.
+
+    The source PVC is never modified. The generated script copies it to the
+    run-specific prepared PVC, converts the copy if needed, derives camera
+    configuration from the dataset and checkpoint, computes missing numeric
+    statistics, and writes the resolved config consumed by train/evaluate.
+    """
+    parts = dataset_repo_id.split("/", 2)
+    subset = parts[2] if len(parts) == 3 else ""
+    source_root = f"{SOURCE_DATASET_ROOT}/{subset}" if subset else SOURCE_DATASET_ROOT
+    spec_yaml = _pi05_spec_yaml()
+    requested_chunk = "" if chunk_size is None else str(chunk_size)
+    requested_action_steps = "" if n_action_steps is None else str(n_action_steps)
+    requested_empty_cameras = "" if empty_cameras is None else str(empty_cameras)
+    requested_batch_size = "" if batch_size_per_gpu is None else str(batch_size_per_gpu)
+    requested_num_workers = "" if num_workers is None else str(num_workers)
+    requested_save_freq = "" if save_freq is None else str(save_freq)
+    requested_compile_model = "" if compile_model is None else str(compile_model).lower()
+    return f'''\
+set -euo pipefail
+export HOME=/tmp
+export HF_LEROBOT_HOME={PREPARED_DATASET_ROOT}
+SOURCE_ROOT="{source_root}"
+WORK_ROOT="{PREPARED_DATASET_ROOT}"
+MODEL_REPO_ID="{PI05_PRETRAINED_PATH}"
+DATASET_REPO_ID="{dataset_repo_id}"
+
+test -f "$SOURCE_ROOT/meta/info.json" || {{
+  echo "Prepared-dataset source is missing $SOURCE_ROOT/meta/info.json" >&2
+  exit 1
+}}
+
+# This directory belongs exclusively to this run's prepared-dataset PVC.
+mkdir -p "$WORK_ROOT"
+find "$WORK_ROOT" -mindepth 1 -maxdepth 1 -exec rm -rf -- {{}} +
+cp -a "$SOURCE_ROOT"/. "$WORK_ROOT"/
+
+cat > /tmp/pi05.yaml <<'SPEC_EOF'
+{spec_yaml}SPEC_EOF
+
+DATASET_VERSION="$(python - "$WORK_ROOT/meta/info.json" <<'PYEOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    info = json.load(f)
+print(info.get("codebase_version") or info.get("version") or "")
+PYEOF
+)"
+if [[ "${{DATASET_VERSION#v}}" != 3.* ]]; then
+  echo "Converting copied dataset from $DATASET_VERSION to LeRobot v3.0"
+  python -m lerobot.scripts.convert_dataset_v21_to_v30 \\
+    --repo-id="$DATASET_REPO_ID" \\
+    --root="$WORK_ROOT" \\
+    --push-to-hub=false
+fi
+
+python - "$WORK_ROOT" "/tmp/pi05.yaml" "{requested_chunk}" "{requested_action_steps}" "{requested_empty_cameras}" "{training_profile}" "{training_steps}" "{requested_batch_size}" "{requested_num_workers}" "{requested_save_freq}" "{requested_compile_model}" <<'PYEOF'
+import json
+import math
+import os
+import re
+import sys
+from pathlib import Path
+
+import numpy as np
+import yaml
+
+root = Path(sys.argv[1])
+spec = yaml.safe_load(Path(sys.argv[2]).read_text())
+requested_chunk = int(sys.argv[3]) if sys.argv[3] else None
+requested_action_steps = int(sys.argv[4]) if sys.argv[4] else None
+requested_empty_cameras = int(sys.argv[5]) if sys.argv[5] else None
+training_profile = sys.argv[6]
+training_steps = int(sys.argv[7])
+requested_batch_size = int(sys.argv[8]) if sys.argv[8] else None
+requested_num_workers = int(sys.argv[9]) if sys.argv[9] else None
+requested_save_freq = int(sys.argv[10]) if sys.argv[10] else None
+requested_compile_model = sys.argv[11].lower() == "true" if sys.argv[11] else None
+info_path = root / "meta" / "info.json"
+info = json.loads(info_path.read_text())
+features = info.get("features", {{}})
+version = str(info.get("codebase_version") or info.get("version") or "")
+if not version.startswith("v3"):
+    raise SystemExit(f"Prepared dataset is still not LeRobot v3.x: {{version!r}}")
+
+def fail(message):
+    raise SystemExit("Pi0.5 dataset validation failed: " + message)
+
+profiles = spec.get("training_profiles", {{}})
+if training_profile not in profiles:
+    fail(f"unknown Pi0.5 training profile {{training_profile!r}}; available profiles={{sorted(profiles)}}")
+profile = profiles[training_profile]
+
+def feature_dtype(specification):
+    return str(specification.get("dtype", "")).lower() if isinstance(specification, dict) else ""
+
+action = features.get("action")
+if not action or not action.get("shape"):
+    fail("missing shaped 'action' feature")
+state_key = spec["compatibility"]["state"]["feature_key"]
+if state_key not in features:
+    fail(f"missing required state feature {{state_key!r}}")
+task_candidates = [k for k in ("task", "task_index") if k in features]
+if not task_candidates and not (root / "meta" / "tasks.parquet").exists():
+    fail("no task/task_index feature or meta/tasks.parquet was found")
+
+camera_keys = [
+    key for key, value in features.items()
+    if feature_dtype(value) in {{"image", "video"}}
+]
+
+def camera_role(name):
+    name = name.lower()
+    if any(token in name for token in ("wrist", "hand", "gripper")):
+        return "wrist"
+    if any(token in name for token in ("base", "front", "world", "exterior", "overhead", "top")):
+        return "exterior"
+    return "unknown"
+
+model_config = {{}}
+try:
+    from huggingface_hub import hf_hub_download
+    config_path = hf_hub_download(
+        repo_id="{PI05_PRETRAINED_PATH}", filename="config.json", token=os.environ.get("HF_TOKEN") or None
+    )
+    model_config = json.loads(Path(config_path).read_text())
+except Exception as exc:
+    fail(f"could not download model config for camera validation: {{exc}}")
+
+input_features = model_config.get("input_features", {{}})
+model_camera_keys = [
+    key for key, value in input_features.items()
+    if "image" in key.lower() or "camera" in key.lower()
+    or (isinstance(value, dict) and str(value.get("type", "")).lower() in {{"image", "video", "visual"}})
+]
+if not model_camera_keys:
+    fail("base model config did not expose any camera input features")
+
+mapping = {{}}
+unused = set(camera_keys)
+warnings = []
+for target in model_camera_keys:
+    target_role = camera_role(target)
+    candidates = [key for key in sorted(unused) if camera_role(key) == target_role]
+    if not candidates and target_role == "unknown":
+        candidates = sorted(unused)
+    if len(candidates) != 1:
+        if not candidates and len(unused) == 1:
+            candidates = sorted(unused)
+        else:
+            fail(f"camera mapping for model slot {{target!r}} is ambiguous; dataset cameras={{camera_keys}}, model slots={{model_camera_keys}}")
+    mapping[target] = candidates[0]
+    unused.remove(candidates[0])
+
+derived_empty_cameras = max(0, len(model_camera_keys) - len(mapping))
+empty_cameras = requested_empty_cameras if requested_empty_cameras is not None else derived_empty_cameras
+if empty_cameras < derived_empty_cameras:
+    fail(f"explicit empty_cameras={{empty_cameras}} is below the required derived value {{derived_empty_cameras}}")
+if unused:
+    warnings.append("unused dataset camera features: " + ", ".join(sorted(unused)))
+
+readme_text = ""
+for candidate in (root / "README.md", root.parent / "README.md"):
+    if candidate.exists():
+        readme_text += candidate.read_text(errors="ignore").lower()
+if re.search(r"\\b(delta|relative|velocity)\\b", readme_text):
+    fail("dataset documentation indicates delta/relative/velocity actions; Pi0.5 recipe requires absolute actions")
+if not re.search(r"\\b(absolute|joint position|joint_position)\\b", readme_text):
+    warnings.append("could not prove absolute joint-position action encoding from dataset metadata/documentation")
+
+fps = float(info.get("fps") or 0)
+chunk_size = requested_chunk or (max(1, round(fps * 5)) if fps else spec["compatibility"]["control"]["default_chunk_size"])
+n_action_steps = requested_action_steps or min(chunk_size, int(spec["compatibility"]["control"]["default_chunk_size"]))
+if n_action_steps > chunk_size:
+    fail(f"n_action_steps={{n_action_steps}} exceeds chunk_size={{chunk_size}}")
+
+batch_size_per_gpu = requested_batch_size or int(profile["batch_size_per_gpu"])
+num_workers = requested_num_workers if requested_num_workers is not None else int(profile["num_workers"])
+save_freq = requested_save_freq or int(profile["save_freq"])
+compile_model = requested_compile_model if requested_compile_model is not None else bool(profile["compile_model"])
+
+# Produce the same stats.json shape LeRobot expects, without decoding video.
+stats_path = root / "meta" / "stats.json"
+stats = json.loads(stats_path.read_text()) if stats_path.exists() else {{}}
+numeric_columns = {{"action", state_key}}
+required_stat_names = ("mean", "std", "q01", "q10", "q50", "q90", "q99")
+missing_stats = [
+    key for key in numeric_columns
+    if key not in stats or not all(name in stats[key] for name in required_stat_names)
+]
+if missing_stats:
+    import pyarrow.parquet as pq
+    chunks = {{key: [] for key in missing_stats}}
+    for shard in sorted((root / "data").glob("**/*.parquet")):
+        parquet = pq.ParquetFile(shard)
+        available = set(parquet.schema_arrow.names)
+        columns = [key for key in missing_stats if key in available]
+        for batch in parquet.iter_batches(columns=columns):
+            for key in columns:
+                arr = batch.column(key).to_numpy(zero_copy_only=False)
+                if arr.dtype == object:
+                    arr = np.stack([np.asarray(row, dtype=np.float64) for row in arr])
+                else:
+                    arr = np.asarray(arr, dtype=np.float64).reshape(-1, 1)
+                chunks[key].append(arr)
+    for key in missing_stats:
+        if not chunks[key]:
+            fail(f"could not find numeric Parquet column {{key!r}} to compute normalization stats")
+        values = np.concatenate(chunks[key], axis=0)
+        stats[key] = {{
+            "min": np.min(values, axis=0).tolist(),
+            "max": np.max(values, axis=0).tolist(),
+            "mean": np.mean(values, axis=0).tolist(),
+            "std": np.std(values, axis=0).tolist(),
+            "count": [int(values.shape[0])],
+        }}
+        quantiles = np.quantile(values, [0.01, 0.10, 0.50, 0.90, 0.99], axis=0)
+        for name, values_at_quantile in zip(("q01", "q10", "q50", "q90", "q99"), quantiles):
+            stats[key][name] = np.atleast_1d(values_at_quantile).tolist()
+    stats_path.write_text(json.dumps(stats, indent=2) + "\\n")
+
+resolved = {{
+    "model": "pi05",
+    "dataset_version": version,
+    "fps": fps,
+    "action_shape": action.get("shape"),
+    "state_key": state_key,
+    "camera_mapping": mapping,
+    "empty_cameras": empty_cameras,
+    "chunk_size": chunk_size,
+    "n_action_steps": n_action_steps,
+    "training_profile": training_profile,
+    "training_steps": training_steps,
+    "batch_size_per_gpu": batch_size_per_gpu,
+    "num_workers": num_workers,
+    "save_freq": save_freq,
+    "freeze_vision_encoder": bool(profile["freeze_vision_encoder"]),
+    "train_expert_only": bool(profile["train_expert_only"]),
+    "gradient_checkpointing": bool(profile["gradient_checkpointing"]),
+    "dtype": profile["dtype"],
+    "compile_model": compile_model,
+    "normalization_mapping": {{"ACTION": "QUANTILES", "STATE": "QUANTILES", "VISUAL": "IDENTITY"}},
+    "warnings": warnings,
+}}
+(root / "dataset-manifest.json").write_text(json.dumps({{"info": info, "camera_features": camera_keys}}, indent=2) + "\\n")
+(root / "resolved-training-config.json").write_text(json.dumps(resolved, indent=2) + "\\n")
+print(json.dumps(resolved, indent=2))
+PYEOF
+'''
+
+
 def _train_script(
     dataset_repo_id: str,
     exp_name: str,
@@ -150,12 +425,13 @@ def _train_script(
     chunk_size: int | None = None,
     n_action_steps: int | None = None,
     empty_cameras: int | None = None,
+    training_steps: int = 50,
 ) -> tuple[str, int | None]:
     """Training stage script: runs lerobot-train directly -- a plain CLI, no
     custom Python config-construction shim needed unlike the old openpi-based
-    recipe. Uses the MEAN_STD normalization override instead of the
-    QUANTILES preprocessing script, for a simpler first pass (see plan's
-    "Open risks" re: fine-tune quality tradeoff).
+    recipe. Uses Pi0.5's QUANTILES normalization for action/state, with the
+    preparation stage computing missing quantile statistics directly from
+    Parquet without decoding video.
 
     huggingface/lerobot-gpu:latest already ships lerobot with pi0.5 support
     preinstalled (confirmed live: `import lerobot.policies.pi05` and
@@ -236,34 +512,48 @@ def _train_script(
     lerobot-train, not just whatever the caller (or lack thereof) supplied.
     """
     optional_flags = ""
-    if chunk_size is not None:
-        optional_flags += f"    --policy.chunk_size={chunk_size} \\\n"
     effective_n_action_steps = n_action_steps
     if effective_n_action_steps is None and chunk_size is not None and chunk_size < PI05_BASE_DEFAULT_N_ACTION_STEPS:
         effective_n_action_steps = chunk_size
-    if effective_n_action_steps is not None:
-        optional_flags += f"    --policy.n_action_steps={effective_n_action_steps} \\\n"
-    if empty_cameras is not None:
-        optional_flags += f"    --policy.empty_cameras={empty_cameras} \\\n"
 
     script = f"""\
 set -e
 export HOME=/tmp
-export HF_LEROBOT_HOME={DATASET_MOUNT_ROOT}
+export HF_LEROBOT_HOME={PREPARED_DATASET_ROOT}
+PREPARED_CONFIG={PREPARED_DATASET_ROOT}/resolved-training-config.json
+test -f "$PREPARED_CONFIG"
+EMPTY_CAMERAS="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["empty_cameras"])' "$PREPARED_CONFIG")"
+RESOLVED_CHUNK_SIZE="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["chunk_size"])' "$PREPARED_CONFIG")"
+RESOLVED_N_ACTION_STEPS="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["n_action_steps"])' "$PREPARED_CONFIG")"
+BATCH_SIZE="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["batch_size_per_gpu"])' "$PREPARED_CONFIG")"
+NUM_WORKERS="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["num_workers"])' "$PREPARED_CONFIG")"
+SAVE_FREQ="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["save_freq"])' "$PREPARED_CONFIG")"
+FREEZE_VISION_ENCODER="$(python -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["freeze_vision_encoder"]).lower())' "$PREPARED_CONFIG")"
+TRAIN_EXPERT_ONLY="$(python -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["train_expert_only"]).lower())' "$PREPARED_CONFIG")"
+GRADIENT_CHECKPOINTING="$(python -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["gradient_checkpointing"]).lower())' "$PREPARED_CONFIG")"
+DTYPE="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["dtype"])' "$PREPARED_CONFIG")"
+COMPILE_MODEL="$(python -c 'import json,sys; print(str(json.load(open(sys.argv[1]))["compile_model"]).lower())' "$PREPARED_CONFIG")"
 lerobot-train \\
     --dataset.repo_id={dataset_repo_id} \\
-    --dataset.root={dataset_mount_path(dataset_repo_id)} \\
+    --dataset.root={PREPARED_DATASET_ROOT} \\
     --dataset.episodes="{train_episodes}" \\
     --policy.type=pi05 \\
     --policy.push_to_hub=false \\
     --policy.pretrained_path={PI05_PRETRAINED_PATH} \\
-    --policy.train_expert_only=true \\
-    --policy.gradient_checkpointing=true \\
-    --policy.dtype=bfloat16 \\
+    --policy.train_expert_only="$TRAIN_EXPERT_ONLY" \\
+    --policy.gradient_checkpointing="$GRADIENT_CHECKPOINTING" \\
+    --policy.dtype="$DTYPE" \\
     --policy.device=cuda \\
     --policy.normalization_mapping='{NORMALIZATION_MAPPING}' \\
-{optional_flags}    --batch_size={batch_size} \\
-    --steps={num_train_steps} \\
+    --policy.empty_cameras="$EMPTY_CAMERAS" \\
+    --policy.chunk_size="$RESOLVED_CHUNK_SIZE" \\
+    --policy.n_action_steps="$RESOLVED_N_ACTION_STEPS" \\
+    --policy.freeze_vision_encoder="$FREEZE_VISION_ENCODER" \\
+    --policy.compile_model="$COMPILE_MODEL" \\
+{optional_flags}    --batch_size="$BATCH_SIZE" \\
+    --steps={training_steps} \\
+    --num_workers="$NUM_WORKERS" \\
+    --save_freq="$SAVE_FREQ" \\
     --output_dir={CHECKPOINT_MOUNT_PATH}/{exp_name} \\
     --job_name={exp_name} \\
     --wandb.enable=false
@@ -291,7 +581,7 @@ def _evaluate_script(dataset_repo_id: str, exp_name: str, eval_episodes: list[in
     eval_script = f"""\
 set -e
 export HOME=/tmp
-export HF_LEROBOT_HOME={DATASET_MOUNT_ROOT}
+export HF_LEROBOT_HOME={PREPARED_DATASET_ROOT}
 cat > /tmp/run_eval.py << 'PYEOF'
 import torch
 import numpy as np
@@ -310,7 +600,7 @@ preprocessor, postprocessor = make_pre_post_processors(
     preprocessor_overrides={{"device_processor": {{"device": str(device)}}}},
 )
 
-dataset = LeRobotDataset(DATASET_REPO_ID, root="{dataset_mount_path(dataset_repo_id)}")
+dataset = LeRobotDataset(DATASET_REPO_ID, root="{PREPARED_DATASET_ROOT}")
 held_out = {eval_episodes}
 print(f"Evaluating against held-out episodes: {{held_out}}")
 
@@ -432,6 +722,12 @@ def get_recipe(
     chunk_size: int | None = None,
     n_action_steps: int | None = None,
     empty_cameras: int | None = None,
+    training_profile: str = "expert_only",
+    training_steps: int = 50,
+    batch_size_per_gpu: int | None = None,
+    num_workers: int | None = None,
+    save_freq: int | None = None,
+    compile_model: bool | None = None,
 ) -> tuple[list[dict], dict[str, str]]:
     """Returns the ordered stage list for a model's fine-tuning recipe, plus
     the resolved recipe as a flat dict of MLflow-safe (string-valued) params
@@ -479,14 +775,16 @@ def get_recipe(
     if isinstance(info, str):
         raise ValueError(f"Could not resolve recipe for '{effective_dataset_id}': {info}")
     train_episodes, eval_episodes = split_episodes(info["total_episodes"])
+    resolved_chunk_size = chunk_size or (max(1, round(float(info.get("fps") or 0) * 5)) if info.get("fps") else 50)
+    resolved_n_action_steps = n_action_steps or min(resolved_chunk_size, PI05_BASE_DEFAULT_N_ACTION_STEPS)
 
     # Temporarily reduced from 3_000 -- at the measured ~5.4s/step pace on a
     # single L40S, 3_000 steps takes ~4.5 hours. 50 steps (~4.5 minutes) is
     # enough to validate the full pipeline (train -> checkpoint -> evaluate)
     # end to end without tying up a shared GPU for hours on every dry run.
     # Bump back up for a real training run meant to produce a usable policy.
-    NUM_TRAIN_STEPS = 50
-    BATCH_SIZE = 32
+    NUM_TRAIN_STEPS = training_steps
+    BATCH_SIZE = batch_size_per_gpu or (4 if training_profile == "expert_only" else 1)
 
     train_script, effective_n_action_steps = _train_script(
         effective_dataset_id,
@@ -494,12 +792,35 @@ def get_recipe(
         num_train_steps=NUM_TRAIN_STEPS,
         batch_size=BATCH_SIZE,
         train_episodes=train_episodes,
-        chunk_size=chunk_size,
-        n_action_steps=n_action_steps,
+        chunk_size=resolved_chunk_size,
+        n_action_steps=resolved_n_action_steps,
         empty_cameras=empty_cameras,
+        training_steps=NUM_TRAIN_STEPS,
     )
 
     stages = [
+        {
+            "name": "prepare-dataset",
+            "image": LEROBOT_IMAGE,
+            "gpu": 0,
+            "needs_source_dataset": True,
+            "command": [
+                "/bin/bash",
+                "-c",
+                _prepare_script(
+                    effective_dataset_id,
+                    chunk_size=resolved_chunk_size,
+                    n_action_steps=resolved_n_action_steps,
+                    empty_cameras=empty_cameras,
+                    training_profile=training_profile,
+                    training_steps=NUM_TRAIN_STEPS,
+                    batch_size_per_gpu=batch_size_per_gpu,
+                    num_workers=num_workers,
+                    save_freq=save_freq,
+                    compile_model=compile_model,
+                ),
+            ],
+        },
         {
             "name": "train",
             "image": LEROBOT_IMAGE,
@@ -527,9 +848,12 @@ def get_recipe(
         "dataset_repo_id": dataset_repo_id,
         "pretrained_path": PI05_PRETRAINED_PATH,
         "num_train_steps": str(NUM_TRAIN_STEPS),
-        "batch_size": str(BATCH_SIZE),
+        "training_profile": training_profile,
+        "batch_size_per_gpu": str(BATCH_SIZE),
         "normalization_mapping": NORMALIZATION_MAPPING,
-        "train_expert_only": "true",
+        "train_expert_only": "true" if training_profile == "expert_only" else "profile-resolved",
+        "chunk_size": str(resolved_chunk_size),
+        "n_action_steps": str(resolved_n_action_steps),
         "total_episodes": str(info["total_episodes"]),
         "num_train_episodes": str(len(train_episodes)),
         "num_eval_episodes": str(len(eval_episodes)),
@@ -537,10 +861,6 @@ def get_recipe(
     }
     if dataset_subset:
         params["dataset_subset"] = dataset_subset
-    if chunk_size is not None:
-        params["chunk_size"] = str(chunk_size)
-    if effective_n_action_steps is not None:
-        params["n_action_steps"] = str(effective_n_action_steps)
     if empty_cameras is not None:
         params["empty_cameras"] = str(empty_cameras)
 

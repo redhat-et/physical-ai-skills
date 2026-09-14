@@ -1,0 +1,62 @@
+model: pi05
+checkpoint: lerobot/pi05_base
+policy_type: pi05
+
+compatibility:
+  lerobot_version: v3.x
+  convert_from:
+    - v2.1
+  action:
+    encoding: absolute
+    representation: joint
+    dimension: adaptable
+  state:
+    required: true
+    feature_key: observation.state
+  task:
+    required: true
+  cameras:
+    mapping_direction: model_slot_to_dataset_feature
+    missing_policy: empty_camera_padding
+    # Pi05 resolves input features from the dataset. Do not pass rename_map
+    # with pretrained_path: it can make the policy look for keys that the
+    # dataset loader does not yield.
+    rename_policy: preserve_dataset_names
+    ambiguous_mapping: fail
+  normalization:
+    action: QUANTILES
+    state: QUANTILES
+    visual: IDENTITY
+    required_stats:
+      - q01
+      - q10
+      - q50
+      - q90
+      - q99
+    compute_missing_stats: true
+  control:
+    derive_chunk_size_from_fps: true
+    default_chunk_size: 50
+    n_action_steps_must_not_exceed_chunk_size: true
+  evaluation:
+    reserve_last_episodes: 5
+
+training_profiles:
+  expert_only:
+    freeze_vision_encoder: true
+    train_expert_only: true
+    gradient_checkpointing: true
+    dtype: bfloat16
+    compile_model: false
+    batch_size_per_gpu: 4
+    num_workers: 4
+    save_freq: 5000
+  full_finetune:
+    freeze_vision_encoder: false
+    train_expert_only: false
+    gradient_checkpointing: true
+    dtype: bfloat16
+    compile_model: false
+    batch_size_per_gpu: 1
+    num_workers: 4
+    save_freq: 5000
