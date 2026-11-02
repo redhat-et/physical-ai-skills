@@ -4,6 +4,12 @@ Agentic workflow skills for the platform agent in
 [physical-ai-platform-demo](https://github.com/redhat-et/physical-ai-platform-demo).
 Fetched into the agent's container image at build time.
 
+## Entry point
+
+[`platform`](skills/platform/SKILL.md) is the entry point: it routes a
+request to the narrowest skill and names the order for multi-step work.
+Agents should always start there.
+
 ## Structure
 
 ```
